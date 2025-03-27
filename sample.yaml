@@ -1,0 +1,86 @@
+# This is a sample CanaryDeployment Custom Resource (CR) for our Canary Deployment Operator
+# It demonstrates how to configure and use the canary deployment functionality
+apiVersion: deployment.k8s.io/v1alpha1
+kind: CanaryDeployment
+metadata:
+  name: myapp-canary
+  namespace: default
+spec:
+  # The name of the primary/stable deployment that we want to modify
+  primaryDeployment: myapp
+  
+  # The new container image that we want to test as a canary deployment
+  canaryImage: myapp:v2.0.1
+  
+  # The service that routes traffic to the deployment
+  service: myapp-service
+  
+  # The maximum number of pods over the desired number during the canary deployment
+  # Can be an absolute number (e.g., "2") or a percentage (e.g., "25%")
+  maxSurge: "25%"
+  
+  # Whether to automatically promote the canary to primary when all steps succeed
+  # If false, manual promotion is required
+  autoPromote: false
+  
+  # Define the incremental steps to roll out the canary deployment
+  # Each step increases the traffic percentage to the canary deployment
+  steps:
+    # First step: 10% of traffic to canary deployment
+    - weight: 10
+      # Wait for 5 minutes before proceeding to the next step
+      pause: 5m
+      # Optional: Step-specific metric checks can be defined
+      metrics:
+        - name: error-rate
+          prometheusQuery: 'sum(rate(http_requests_total{status=~"5..",service="myapp-canary"}[1m])) / sum(rate(http_requests_total{service="myapp-canary"}[1m])) * 100'
+          threshold: "1"
+          
+    # Second step: 25% of traffic to canary deployment
+    - weight: 25
+      pause: 10m
+      
+    # Third step: 50% of traffic to canary deployment
+    - weight: 50
+      pause: 15m
+      
+    # Final step: 100% of traffic to canary deployment
+    - weight: 100
+      pause: 10m
+  
+  # Define metrics that will be analyzed throughout the canary deployment
+  analysis:
+    # How frequently to check the metrics
+    interval: 30s
+    
+    # The maximum traffic percentage that the canary can receive if metrics are failing
+    maxWeight: 50
+    
+    # How many consecutive successful metric checks are required before proceeding
+    threshold: 3
+    
+    # Define the metrics to evaluate for promoting or rolling back the canary
+    metrics:
+      # Check for error rate
+      - name: error-rate
+        # Prometheus query to execute
+        prometheusQuery: 'sum(rate(http_requests_total{status=~"5..",service="myapp-canary"}[1m])) / sum(rate(http_requests_total{service="myapp-canary"}[1m])) * 100'
+        # Maximum allowed value (percentage)
+        threshold: "1"
+        
+      # Check for latency
+      - name: latency-p95
+        prometheusQuery: 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="myapp-canary"}[1m])) by (le))'
+        threshold: "0.5"
+        
+      # Check for CPU usage
+      - name: cpu-usage
+        prometheusQuery: 'sum(rate(container_cpu_usage_seconds_total{container="myapp",pod=~"myapp-canary-.*"}[1m]))'
+        threshold: "0.8"
+        
+      # Check for success rate
+      - name: success-rate
+        prometheusQuery: 'sum(rate(http_requests_total{status=~"2..",service="myapp-canary"}[1m])) / sum(rate(http_requests_total{service="myapp-canary"}[1m])) * 100'
+        # Use a range check for this metric
+        thresholdRange:
+          min: "99"
